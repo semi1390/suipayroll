@@ -34,7 +34,12 @@ export function BatchCard({ batch }: BatchCardProps) {
           </div>
         </div>
         <div className="text-right">
-          <p className="font-display font-bold text-sky-400 text-lg">{formatSui(batch.total_amount)}</p>
+          <p className="font-display font-bold text-sky-400 text-lg">
+  {batch.token_type === 'USDC'
+    ? `${(Number(batch.total_amount) / 1_000_000).toFixed(2)} USDC`
+    : formatSui(batch.total_amount)
+  }
+</p>
           <p className="text-xs text-slate-500">{batch.employees.length} employees</p>
         </div>
       </div>

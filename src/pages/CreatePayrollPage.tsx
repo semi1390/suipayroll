@@ -1,18 +1,20 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSuiClient, useCurrentAccount } from '@mysten/dapp-kit';
+import { Transaction } from '@mysten/sui/transactions';
 import { EmployeeFormRow, CreateBatchForm } from '../types';
 import { useCreateBatch } from '../hooks/useTransactions';
 import { useSuiBalance, useValidateAddress, useUSDCBalance } from '../hooks/useSuiData';
 import { Button, Input, Card, TxSuccessBanner, TxErrorBanner, SectionHeader } from '../components/ui';
-import { isValidSuiAddress, suiToMist, mistToSui, cn } from '../utils/helpers';
+import { isValidSuiAddress, suiToMist, mistToSui, cn, dateToTimestampMs } from '../utils/helpers';
 import { DEMO_EMPLOYEES, DEMO_PAYDAY, DEMO_TOKEN_TYPE } from '../utils/demo';
 import { DatePicker } from '../components/DatePicker';
+import { FN } from '../utils/contract';
 import Papa from 'papaparse';
 import { getTemplates, saveTemplate, deleteTemplate, PayrollTemplate } from '../utils/templates';
 
-
 const EMPTY_EMPLOYEE: EmployeeFormRow = { wallet: '', amount: '', name: '' };
+const USDC_TYPE = '0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC';
 
 function WalletInput({ value, onChange, error }: {
   value: string;
@@ -45,27 +47,13 @@ function WalletInput({ value, onChange, error }: {
           {value && isValid && checking && (
             <span className="w-3 h-3 border border-sky-400 border-t-transparent rounded-full animate-spin block" />
           )}
-          {value && isValid && !checking && hasActivity && (
-            <span className="text-emerald-400">✓</span>
-          )}
-          {value && isValid && !checking && hasActivity === false && (
-            <span className="text-amber-400">?</span>
-          )}
+          {value && isValid && !checking && hasActivity && <span className="text-emerald-400">✓</span>}
+          {value && isValid && !checking && hasActivity === false && <span className="text-amber-400">?</span>}
         </div>
       </div>
-      {value && !isValid && (
-        <p className="text-xs text-red-400 font-mono">
-          Invalid address — must be 0x followed by 64 hex characters
-        </p>
-      )}
-      {value && isValid && !checking && hasActivity === false && (
-        <p className="text-xs text-amber-400">
-          ⚠️ No transaction history on Sui testnet — double check this address
-        </p>
-      )}
-      {value && isValid && !checking && hasActivity && (
-        <p className="text-xs text-emerald-400">✓ Active Sui address</p>
-      )}
+      {value && !isValid && <p className="text-xs text-red-400 font-mono">Invalid address — must be 0x followed by 64 hex characters</p>}
+      {value && isValid && !checking && hasActivity === false && <p className="text-xs text-amber-400">⚠️ No transaction history on Sui testnet — double check this address</p>}
+      {value && isValid && !checking && hasActivity && <p className="text-xs text-emerald-400">✓ Active Sui address</p>}
       {error && <p className="text-xs text-red-400 font-mono">{error}</p>}
     </div>
   );
@@ -87,16 +75,18 @@ export function CreatePayrollPage() {
   const [step, setStep] = useState<'form' | 'confirm'>('form');
   const [usedDemo, setUsedDemo] = useState(false);
   const [templates, setTemplates] = useState<PayrollTemplate[]>(getTemplates());
-const [showTemplates, setShowTemplates] = useState(false);
-const [showSaveTemplate, setShowSaveTemplate] = useState(false);
-const [templateName, setTemplateName] = useState('');
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const [gasEstimate, setGasEstimate] = useState<string | null>(null);
+  const [estimating, setEstimating] = useState(false);
 
   const totalSui = employees.reduce((acc, e) => acc + (parseFloat(e.amount) || 0), 0);
-const totalMist = suiToMist(totalSui);
-const totalUSDC = BigInt(Math.round(totalSui * 1_000_000));
-const activeBalance = tokenType === 'USDC' ? usdcBalance : balance;
-const activeRequired = tokenType === 'USDC' ? totalUSDC : totalMist;
-const hasEnoughBalance = activeBalance !== undefined && activeBalance >= activeRequired;
+  const totalMist = suiToMist(totalSui);
+  const totalUSDC = BigInt(Math.round(totalSui * 1_000_000));
+  const activeBalance = tokenType === 'USDC' ? usdcBalance : balance;
+  const activeRequired = tokenType === 'USDC' ? totalUSDC : totalMist;
+  const hasEnoughBalance = activeBalance !== undefined && activeBalance >= activeRequired;
 
   function loadDemo() {
     setEmployees(DEMO_EMPLOYEES.map(e => ({ ...e })));
@@ -104,29 +94,26 @@ const hasEnoughBalance = activeBalance !== undefined && activeBalance >= activeR
     setTokenType(DEMO_TOKEN_TYPE);
     setUsedDemo(true);
   }
+
   function handleSaveTemplate() {
-  if (!templateName.trim()) return;
-  saveTemplate({
-    name: templateName,
-    employees,
-    token_type: tokenType,
-  });
-  setTemplates(getTemplates());
-  setTemplateName('');
-  setShowSaveTemplate(false);
-}
+    if (!templateName.trim()) return;
+    saveTemplate({ name: templateName, employees, token_type: tokenType });
+    setTemplates(getTemplates());
+    setTemplateName('');
+    setShowSaveTemplate(false);
+  }
 
-function handleLoadTemplate(template: PayrollTemplate) {
-  setEmployees(template.employees.map(e => ({ ...e })));
-  setTokenType(template.token_type);
-  setShowTemplates(false);
-  setUsedDemo(true);
-}
+  function handleLoadTemplate(template: PayrollTemplate) {
+    setEmployees(template.employees.map(e => ({ ...e })));
+    setTokenType(template.token_type);
+    setShowTemplates(false);
+    setUsedDemo(true);
+  }
 
-function handleDeleteTemplate(id: string) {
-  deleteTemplate(id);
-  setTemplates(getTemplates());
-}
+  function handleDeleteTemplate(id: string) {
+    deleteTemplate(id);
+    setTemplates(getTemplates());
+  }
 
   function handleCSV(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -141,23 +128,69 @@ function handleDeleteTemplate(id: string) {
           wallet: row.wallet || row.Wallet || row.address || row.Address || '',
           amount: row.amount || row.Amount || row.salary || row.Salary || '',
         })).filter(r => r.wallet);
-        if (parsed.length > 0) {
-          setEmployees(parsed);
-          setUsedDemo(true);
-        }
+        if (parsed.length > 0) { setEmployees(parsed); setUsedDemo(true); }
       },
     });
     e.target.value = '';
   }
 
-  function addEmployee() {
-    setEmployees(prev => [...prev, { ...EMPTY_EMPLOYEE }]);
-  }
+  async function estimateGas() {
+  if (!account?.address || employees.length === 0 || !payday) return;
+  setEstimating(true);
+  try {
+    const tx = new Transaction();
+    tx.setSender(account.address);
+    const isUSDC = tokenType === 'USDC';
+    const amounts = employees.map(e =>
+      isUSDC
+        ? BigInt(Math.round(parseFloat(e.amount || '0') * 1_000_000))
+        : suiToMist(e.amount || '0')
+    );
+    const total = amounts.reduce((a, b) => a + b, 0n);
 
-  function removeEmployee(idx: number) {
-    setEmployees(prev => prev.filter((_, i) => i !== idx));
-  }
+    let coin;
+    if (isUSDC) {
+      const usdcCoins = await client.getCoins({
+        owner: account.address,
+        coinType: USDC_TYPE,
+      });
+      if (!usdcCoins.data.length) throw new Error('No USDC');
+      const primaryCoin = tx.object(usdcCoins.data[0].coinObjectId);
+      if (usdcCoins.data.length > 1) {
+        tx.mergeCoins(primaryCoin, usdcCoins.data.slice(1).map(c => tx.object(c.coinObjectId)));
+      }
+      [coin] = tx.splitCoins(primaryCoin, [tx.pure.u64(total)]);
+    } else {
+      [coin] = tx.splitCoins(tx.gas, [tx.pure.u64(total)]);
+    }
 
+    tx.moveCall({
+      target: FN.CREATE_BATCH,
+      typeArguments: [isUSDC ? USDC_TYPE : '0x2::sui::SUI'],
+      arguments: [
+        tx.pure.vector('address', employees.map(e => e.wallet || account.address)),
+        tx.pure.vector('u64', amounts),
+        tx.pure.vector('u8', Array.from(new TextEncoder().encode(tokenType))),
+        tx.pure.u64(dateToTimestampMs(payday)),
+        coin,
+        tx.object('0x6'),
+      ],
+    });
+
+    const dryRun = await client.dryRunTransactionBlock({
+      transactionBlock: await tx.build({ client }),
+    });
+    const gas = dryRun.effects.gasUsed;
+    const totalGas = BigInt(gas.computationCost) + BigInt(gas.storageCost) - BigInt(gas.storageRebate);
+    setGasEstimate(`~${(Number(totalGas) / 1e9).toFixed(6)} SUI`);
+  } catch {
+    setGasEstimate('Unable to estimate');
+  }
+  setEstimating(false);
+}
+
+  function addEmployee() { setEmployees(prev => [...prev, { ...EMPTY_EMPLOYEE }]); }
+  function removeEmployee(idx: number) { setEmployees(prev => prev.filter((_, i) => i !== idx)); }
   function updateEmployee(idx: number, field: keyof EmployeeFormRow, value: string) {
     setEmployees(prev => prev.map((e, i) => i === idx ? { ...e, [field]: value } : e));
     setErrors(prev => { const n = { ...prev }; delete n[`emp_${idx}_${field}`]; return n; });
@@ -170,26 +203,22 @@ function handleDeleteTemplate(id: string) {
       else if (!isValidSuiAddress(e.wallet)) errs[`emp_${i}_wallet`] = 'Invalid Sui address (0x + 64 hex)';
       if (!e.amount) errs[`emp_${i}_amount`] = 'Required';
       else if (parseFloat(e.amount) <= 0) errs[`emp_${i}_amount`] = 'Must be > 0';
-      else if (parseFloat(e.amount) < 0.001) errs[`emp_${i}_amount`] = 'Amount too low — minimum 0.001 SUI';
+      else if (parseFloat(e.amount) < 0.001) errs[`emp_${i}_amount`] = 'Amount too low — minimum 0.001';
     });
     if (!payday) errs.payday = 'Required';
     else if (new Date(payday) <= new Date()) errs.payday = 'Must be in the future';
-    if (!hasEnoughBalance) errs.balance = 'Insufficient SUI balance';
+    if (!hasEnoughBalance) errs.balance = `Insufficient ${tokenType} balance`;
     setErrors(errs);
     return Object.keys(errs).length === 0;
   }
 
-  function handleNext() {
-    if (validate()) setStep('confirm');
-  }
+  function handleNext() { if (validate()) setStep('confirm'); }
 
   async function handleSubmit() {
     if (!account) return;
     const form: CreateBatchForm = { name: batchName, employees, token_type: tokenType, payday };
     const digest = await createBatch(form);
-    if (digest) {
-      setTimeout(() => navigate('/dashboard'), 3000);
-    }
+    if (digest) setTimeout(() => navigate('/dashboard'), 3000);
   }
 
   if (step === 'confirm') {
@@ -228,7 +257,7 @@ function handleDeleteTemplate(id: string) {
           </div>
           <div className="flex items-center justify-between bg-sky-950/30 border border-sky-500/20 rounded-xl p-4">
             <span className="font-display font-bold text-slate-200">Total Required</span>
-            <span className="font-display font-extrabold text-sky-400 text-xl">{totalSui.toFixed(4)} SUI</span>
+            <span className="font-display font-extrabold text-sky-400 text-xl">{totalSui.toFixed(4)} {tokenType}</span>
           </div>
         </Card>
         {txState.status === 'success' && txState.digest && (
@@ -238,9 +267,7 @@ function handleDeleteTemplate(id: string) {
           <div className="mb-4"><TxErrorBanner error={txState.error} onClose={resetTx} /></div>
         )}
         <div className="flex gap-3">
-          <Button variant="secondary" onClick={() => setStep('form')} disabled={txState.status === 'pending'}>
-            ← Back
-          </Button>
+          <Button variant="secondary" onClick={() => setStep('form')} disabled={txState.status === 'pending'}>← Back</Button>
           <Button className="flex-1" onClick={handleSubmit} loading={txState.status === 'pending'} disabled={txState.status === 'success'}>
             {txState.status === 'pending' ? 'Depositing funds...' : `Deposit ${totalSui.toFixed(4)} ${tokenType} & Create Batch`}
           </Button>
@@ -254,86 +281,68 @@ function handleDeleteTemplate(id: string) {
       <SectionHeader
         title="Create Payroll Batch"
         description="Add employees, set payday, and deposit funds on-chain"
-       action={
-  <div className="flex items-center gap-2">
-    <button
-      onClick={() => setShowTemplates(!showTemplates)}
-      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-display font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all"
-    >
-      📋 Templates {templates.length > 0 && `(${templates.length})`}
-    </button>
-    {!usedDemo && (
-      <Button variant="ghost" size="sm" onClick={loadDemo}>Load demo</Button>
-    )}
-    <label className="cursor-pointer">
-      <input type="file" accept=".csv" className="hidden" onChange={handleCSV} />
-      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-display font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all cursor-pointer">
-        ⬆ Upload CSV
-      </span>
-    </label>
-  </div>
-}
-      />
-      {/* Templates dropdown */}
-{showTemplates && (
-  <div className="mb-4 bg-slate-900 border border-slate-700 rounded-2xl p-4">
-    <h3 className="font-display font-semibold text-slate-200 text-sm mb-3">Saved Templates</h3>
-    {templates.length === 0 ? (
-      <p className="text-slate-500 text-sm">No templates saved yet. Fill the form and save it as a template.</p>
-    ) : (
-      <div className="flex flex-col gap-2">
-        {templates.map(t => (
-          <div key={t.id} className="flex items-center justify-between bg-slate-800 rounded-xl px-4 py-3">
-            <div>
-              <p className="text-slate-100 font-display font-medium text-sm">{t.name}</p>
-              <p className="text-slate-500 text-xs">{t.employees.length} employees · {t.token_type}</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => handleLoadTemplate(t)}
-                className="text-xs bg-sky-500/20 text-sky-400 border border-sky-500/30 rounded-lg px-3 py-1.5 hover:bg-sky-500/30 transition-all font-display"
-              >
-                Load
-              </button>
-              <button
-                onClick={() => handleDeleteTemplate(t.id)}
-                className="text-xs text-red-400 hover:text-red-300 transition-colors"
-              >
-                ×
-              </button>
-            </div>
+        action={
+          <div className="flex items-center gap-2">
+            <button onClick={() => setShowTemplates(!showTemplates)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-display font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all">
+              📋 Templates {templates.length > 0 && `(${templates.length})`}
+            </button>
+            {!usedDemo && <Button variant="ghost" size="sm" onClick={loadDemo}>Load demo</Button>}
+            <label className="cursor-pointer">
+              <input type="file" accept=".csv" className="hidden" onChange={handleCSV} />
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-display font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all cursor-pointer">
+                ⬆ Upload CSV
+              </span>
+            </label>
           </div>
-        ))}
-      </div>
-    )}
-  </div>
-)}
-
-{/* Save as template */}
-{showSaveTemplate && (
-  <div className="mb-4 bg-slate-900 border border-slate-700 rounded-2xl p-4">
-    <h3 className="font-display font-semibold text-slate-200 text-sm mb-3">Save as Template</h3>
-    <div className="flex gap-2">
-      <Input
-        placeholder="Template name e.g. Engineering Team"
-        value={templateName}
-        onChange={e => setTemplateName(e.target.value)}
-        className="flex-1"
+        }
       />
-      <Button size="sm" onClick={handleSaveTemplate}>Save</Button>
-      <Button size="sm" variant="secondary" onClick={() => setShowSaveTemplate(false)}>Cancel</Button>
-    </div>
-  </div>
-)}
+
+      {/* Templates dropdown */}
+      {showTemplates && (
+        <div className="mb-4 bg-slate-900 border border-slate-700 rounded-2xl p-4">
+          <h3 className="font-display font-semibold text-slate-200 text-sm mb-3">Saved Templates</h3>
+          {templates.length === 0 ? (
+            <p className="text-slate-500 text-sm">No templates saved yet.</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {templates.map(t => (
+                <div key={t.id} className="flex items-center justify-between bg-slate-800 rounded-xl px-4 py-3">
+                  <div>
+                    <p className="text-slate-100 font-display font-medium text-sm">{t.name}</p>
+                    <p className="text-slate-500 text-xs">{t.employees.length} employees · {t.token_type}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => handleLoadTemplate(t)}
+                      className="text-xs bg-sky-500/20 text-sky-400 border border-sky-500/30 rounded-lg px-3 py-1.5 hover:bg-sky-500/30 transition-all font-display">
+                      Load
+                    </button>
+                    <button onClick={() => handleDeleteTemplate(t.id)} className="text-xs text-red-400 hover:text-red-300 transition-colors">×</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Save as template */}
+      {showSaveTemplate && (
+        <div className="mb-4 bg-slate-900 border border-slate-700 rounded-2xl p-4">
+          <h3 className="font-display font-semibold text-slate-200 text-sm mb-3">Save as Template</h3>
+          <div className="flex gap-2">
+            <Input placeholder="Template name e.g. Engineering Team" value={templateName}
+              onChange={e => setTemplateName(e.target.value)} className="flex-1" />
+            <Button size="sm" onClick={handleSaveTemplate}>Save</Button>
+            <Button size="sm" variant="secondary" onClick={() => setShowSaveTemplate(false)}>Cancel</Button>
+          </div>
+        </div>
+      )}
 
       <Card className="mb-6">
         <div className="mb-4">
-          <Input
-            label="Payroll Name (optional)"
-            placeholder="e.g. May 2026 Engineering Team"
-            value={batchName}
-            onChange={e => setBatchName(e.target.value)}
-          />
+          <Input label="Payroll Name (optional)" placeholder="e.g. May 2026 Engineering Team"
+            value={batchName} onChange={e => setBatchName(e.target.value)} />
         </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
@@ -342,19 +351,15 @@ function handleDeleteTemplate(id: string) {
               {(['SUI', 'USDC'] as const).map(t => (
                 <button key={t} onClick={() => setTokenType(t)}
                   className={cn('flex-1 py-2.5 rounded-xl text-sm font-display font-semibold border transition-all',
-                    tokenType === t ? 'bg-sky-500/20 border-sky-500/50 text-sky-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
-                  )}>
+                    tokenType === t ? 'bg-sky-500/20 border-sky-500/50 text-sky-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200')}>
                   {t}
                 </button>
               ))}
             </div>
           </div>
-          <DatePicker
-            value={payday}
+          <DatePicker value={payday}
             onChange={(date) => { setPayday(date); setErrors(p => { const n = { ...p }; delete n.payday; return n; }); }}
-            error={errors.payday}
-            min={new Date().toISOString().split('T')[0]}
-          />
+            error={errors.payday} min={new Date().toISOString().split('T')[0]} />
         </div>
       </Card>
 
@@ -369,48 +374,31 @@ function handleDeleteTemplate(id: string) {
               <div className="flex items-start gap-2 mb-3">
                 <span className="text-xs font-mono text-slate-600 pt-0.5 w-5 shrink-0">#{idx + 1}</span>
                 <Input placeholder="Label (optional)" value={emp.name}
-                  onChange={e => updateEmployee(idx, 'name', e.target.value)}
-                  className="flex-1 !text-xs !py-1.5"
-                />
+                  onChange={e => updateEmployee(idx, 'name', e.target.value)} className="flex-1 !text-xs !py-1.5" />
                 {employees.length > 1 && (
                   <button onClick={() => removeEmployee(idx)} className="text-slate-600 hover:text-red-400 transition-colors text-lg leading-none mt-1">×</button>
                 )}
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <WalletInput
-                  value={emp.wallet}
-                  onChange={val => updateEmployee(idx, 'wallet', val)}
-                  error={errors[`emp_${idx}_wallet`]}
-                />
+                <WalletInput value={emp.wallet} onChange={val => updateEmployee(idx, 'wallet', val)} error={errors[`emp_${idx}_wallet`]} />
                 <div className="flex flex-col gap-1.5">
                   <div className="relative">
-                    <input
-                      placeholder="0.0"
-                      type="number"
-                      min="0"
-                      step="0.001"
-                      value={emp.amount}
+                    <input placeholder="0.0" type="number" min="0" step="0.001" value={emp.amount}
                       onChange={e => updateEmployee(idx, 'amount', e.target.value)}
-                      className="w-full bg-slate-800/60 border border-slate-700/60 rounded-xl px-4 py-2.5 text-sm text-slate-100 font-mono focus:outline-none focus:ring-2 focus:ring-sky-500/50 pr-14"
-                    />
-                   <button
-  onClick={() => {
-    if (tokenType === 'USDC' && usdcBalance) {
-      const remaining = Number(usdcBalance) / 1_000_000;
-      updateEmployee(idx, 'amount', remaining.toFixed(2));
-    } else if (balance) {
-      const remaining = Number(balance) / 1e9;
-      updateEmployee(idx, 'amount', remaining.toFixed(4));
-    }
-  }}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-xs bg-sky-500/20 text-sky-400 border border-sky-500/30 rounded-lg px-2 py-1 hover:bg-sky-500/30 transition-all font-display"
-                    >
+                      className="w-full bg-slate-800/60 border border-slate-700/60 rounded-xl px-4 py-2.5 text-sm text-slate-100 font-mono focus:outline-none focus:ring-2 focus:ring-sky-500/50 pr-14" />
+                    <button
+                      onClick={() => {
+                        if (tokenType === 'USDC' && usdcBalance) {
+                          updateEmployee(idx, 'amount', (Number(usdcBalance) / 1_000_000).toFixed(2));
+                        } else if (balance) {
+                          updateEmployee(idx, 'amount', (Number(balance) / 1e9).toFixed(4));
+                        }
+                      }}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-xs bg-sky-500/20 text-sky-400 border border-sky-500/30 rounded-lg px-2 py-1 hover:bg-sky-500/30 transition-all font-display">
                       Max
                     </button>
                   </div>
-                  {errors[`emp_${idx}_amount`] && (
-                    <p className="text-xs text-red-400 font-mono">{errors[`emp_${idx}_amount`]}</p>
-                  )}
+                  {errors[`emp_${idx}_amount`] && <p className="text-xs text-red-400 font-mono">{errors[`emp_${idx}_amount`]}</p>}
                 </div>
               </div>
             </div>
@@ -421,28 +409,41 @@ function handleDeleteTemplate(id: string) {
         </button>
       </Card>
 
-      <div className="flex items-center justify-between bg-slate-900 border border-slate-800 rounded-2xl px-5 py-4 mb-6">
+      {/* Total + Balance */}
+      <div className="flex items-center justify-between bg-slate-900 border border-slate-800 rounded-2xl px-5 py-4 mb-3">
         <div>
           <p className="text-xs text-slate-500 font-display uppercase tracking-wider mb-1">Total Required</p>
-         <p className="text-2xl font-display font-extrabold text-sky-400">{totalSui.toFixed(4)} {tokenType}</p>
+          <p className="text-2xl font-display font-extrabold text-sky-400">{totalSui.toFixed(4)} {tokenType}</p>
         </div>
         <div className="text-right">
-          {balance !== undefined && (
-            <p className={cn('text-sm font-mono', hasEnoughBalance ? 'text-emerald-400' : 'text-red-400')}>
-              Balance: {tokenType === 'USDC' 
-  ? `${(Number(usdcBalance ?? 0n) / 1_000_000).toFixed(2)} USDC` 
-  : `${mistToSui(balance ?? 0n)} SUI`
-} {hasEnoughBalance ? '✓' : '✗'}
-            </p>
-          )}
+          <p className={cn('text-sm font-mono', hasEnoughBalance ? 'text-emerald-400' : 'text-red-400')}>
+            Balance: {tokenType === 'USDC'
+              ? `${(Number(usdcBalance ?? 0n) / 1_000_000).toFixed(2)} USDC`
+              : `${mistToSui(balance ?? 0n)} SUI`
+            } {hasEnoughBalance ? '✓' : '✗'}
+          </p>
           {errors.balance && <p className="text-xs text-red-400 mt-1">{errors.balance}</p>}
         </div>
       </div>
 
+      {/* Gas estimation */}
+      <div className="flex items-center justify-between bg-slate-900 border border-slate-800 rounded-2xl px-5 py-3 mb-6">
+        <div className="flex items-center gap-3">
+          <p className="text-xs text-slate-500 font-display uppercase tracking-wider">Est. Gas Fee</p>
+          {gasEstimate && <p className="text-sm font-mono text-slate-300">{gasEstimate}</p>}
+          {!gasEstimate && !estimating && <p className="text-xs text-slate-600">—</p>}
+          {estimating && <span className="w-3 h-3 border border-sky-400 border-t-transparent rounded-full animate-spin block" />}
+        </div>
+        <button onClick={estimateGas} disabled={estimating || employees.every(e => !e.wallet || !e.amount) || !payday}
+          className="text-xs text-sky-400 hover:text-sky-300 font-display disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+          {estimating ? 'Estimating...' : 'Estimate gas →'}
+        </button>
+      </div>
+
       <div className="flex gap-3">
-          <Button variant="secondary" onClick={() => navigate('/dashboard')}>Cancel</Button>
-  <Button variant="secondary" onClick={() => setShowSaveTemplate(true)}>💾 Save Template</Button>
-  <Button className="flex-1" onClick={handleNext}>Review & Confirm →</Button>
+        <Button variant="secondary" onClick={() => navigate('/dashboard')}>Cancel</Button>
+        <Button variant="secondary" onClick={() => setShowSaveTemplate(true)}>💾 Save Template</Button>
+        <Button className="flex-1" onClick={handleNext}>Review & Confirm →</Button>
       </div>
     </div>
   );

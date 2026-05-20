@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { useCurrentAccount } from '@mysten/dapp-kit';
-import { useEmployerBatches, useSuiBalance } from '../hooks/useSuiData';
+import { useEmployerBatches, useSuiBalance, useUSDCBalance } from '../hooks/useSuiData';
 import { BatchCard } from '../components/BatchCard';
 import { Button, StatCard, EmptyState, Spinner, SectionHeader } from '../components/ui';
 import { mistToSui, shortAddress } from '../utils/helpers';
@@ -29,6 +29,7 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const { data: batches, isLoading } = useEmployerBatches();
   const { data: balance } = useSuiBalance();
+  const { data: usdcBalance } = useUSDCBalance();
 
   if (!account) return null;
 
@@ -66,12 +67,12 @@ useEffect(() => {
 
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <StatCard
-          label="Wallet Balance"
-          value={balance !== undefined ? `${mistToSui(balance)} SUI` : '—'}
-          sub="Available to deploy"
-          accent
-        />
+       <StatCard
+  label="Wallet Balance"
+  value={balance !== undefined ? `${mistToSui(balance)} SUI` : '—'}
+  sub={usdcBalance !== undefined ? `${(Number(usdcBalance) / 1_000_000).toFixed(2)} USDC` : undefined}
+  accent
+/>
         <StatCard
           label="Pending Batches"
           value={String(pending.length)}

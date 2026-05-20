@@ -112,7 +112,12 @@ export function BatchDetailPage() {
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-6">
         <Card className="col-span-1">
           <p className="text-xs text-slate-500 uppercase font-display tracking-wider mb-2">Total</p>
-          <p className="text-xl font-display font-bold text-sky-400">{formatSui(batch.total_amount)}</p>
+         <p className="text-xl font-display font-bold text-sky-400">
+  {batch.token_type === 'USDC'
+    ? `${(Number(batch.total_amount) / 1_000_000).toFixed(2)} USDC`
+    : formatSui(batch.total_amount)
+  }
+</p>
         </Card>
         <Card>
           <p className="text-xs text-slate-500 uppercase font-display tracking-wider mb-2">Treasury</p>

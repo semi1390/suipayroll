@@ -50,8 +50,24 @@ export function LandingPage() {
       </div>
 
       <div className="relative z-10 flex flex-col items-center justify-center min-h-screen px-4 text-center">
-        {/* Badge */}
-        <div className="inline-flex items-center gap-2 bg-sky-500/10 border border-sky-500/30 rounded-full px-4 py-1.5 mb-8">
+        {/* Logo */}
+<div className="flex items-center gap-3 mb-10">
+  <svg width="48" height="48" viewBox="0 0 680 680" style={{ borderRadius: 12 }}>
+    <rect width="680" height="680" fill="#0a0f1e" rx="120"/>
+    <circle cx="340" cy="340" r="120" fill="none" stroke="#38bdf8" strokeWidth="4"/>
+    <circle cx="340" cy="340" r="16" fill="#38bdf8"/>
+    <line x1="436" y1="254" x2="508" y2="182" stroke="#38bdf8" strokeWidth="4" strokeLinecap="round"/>
+    <circle cx="524" cy="166" r="14" fill="#38bdf8"/>
+    <line x1="460" y1="340" x2="532" y2="340" stroke="#38bdf8" strokeWidth="4" strokeLinecap="round"/>
+    <circle cx="548" cy="340" r="14" fill="#38bdf8"/>
+    <line x1="436" y1="426" x2="508" y2="498" stroke="#38bdf8" strokeWidth="4" strokeLinecap="round"/>
+    <circle cx="524" cy="514" r="14" fill="#38bdf8"/>
+  </svg>
+  <span className="font-display font-bold text-slate-100 text-2xl">SuiPayroll</span>
+</div>
+
+{/* Badge */}
+<div className="inline-flex items-center gap-2 bg-sky-500/10 border border-sky-500/30 rounded-full px-4 py-1.5 mb-8">
           <span className="w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
           <span className="text-sky-400 text-xs font-mono tracking-wide">Deployed on Sui Testnet</span>
         </div>

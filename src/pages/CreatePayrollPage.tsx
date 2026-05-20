@@ -7,6 +7,9 @@ import { useSuiBalance, useValidateAddress } from '../hooks/useSuiData';
 import { Button, Input, Card, TxSuccessBanner, TxErrorBanner, SectionHeader } from '../components/ui';
 import { isValidSuiAddress, suiToMist, mistToSui, cn } from '../utils/helpers';
 import { DEMO_EMPLOYEES, DEMO_PAYDAY, DEMO_TOKEN_TYPE } from '../utils/demo';
+import { DatePicker } from '../components/DatePicker';
+import Papa from 'papaparse';
+import { getTemplates, saveTemplate, deleteTemplate, PayrollTemplate } from '../utils/templates';
 
 const EMPTY_EMPLOYEE: EmployeeFormRow = { wallet: '', amount: '', name: '' };
 
@@ -77,9 +80,14 @@ export function CreatePayrollPage() {
   const [employees, setEmployees] = useState<EmployeeFormRow[]>([{ ...EMPTY_EMPLOYEE }]);
   const [tokenType, setTokenType] = useState<'SUI' | 'USDC'>('SUI');
   const [payday, setPayday] = useState('');
+  const [batchName, setBatchName] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [step, setStep] = useState<'form' | 'confirm'>('form');
   const [usedDemo, setUsedDemo] = useState(false);
+  const [templates, setTemplates] = useState<PayrollTemplate[]>(getTemplates());
+const [showTemplates, setShowTemplates] = useState(false);
+const [showSaveTemplate, setShowSaveTemplate] = useState(false);
+const [templateName, setTemplateName] = useState('');
 
   const totalSui = employees.reduce((acc, e) => acc + (parseFloat(e.amount) || 0), 0);
   const totalMist = suiToMist(totalSui);
@@ -90,6 +98,51 @@ export function CreatePayrollPage() {
     setPayday(DEMO_PAYDAY);
     setTokenType(DEMO_TOKEN_TYPE);
     setUsedDemo(true);
+  }
+  function handleSaveTemplate() {
+  if (!templateName.trim()) return;
+  saveTemplate({
+    name: templateName,
+    employees,
+    token_type: tokenType,
+  });
+  setTemplates(getTemplates());
+  setTemplateName('');
+  setShowSaveTemplate(false);
+}
+
+function handleLoadTemplate(template: PayrollTemplate) {
+  setEmployees(template.employees.map(e => ({ ...e })));
+  setTokenType(template.token_type);
+  setShowTemplates(false);
+  setUsedDemo(true);
+}
+
+function handleDeleteTemplate(id: string) {
+  deleteTemplate(id);
+  setTemplates(getTemplates());
+}
+
+  function handleCSV(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (results) => {
+        const rows = results.data as Record<string, string>[];
+        const parsed: EmployeeFormRow[] = rows.map(row => ({
+          name: row.name || row.Name || row.label || '',
+          wallet: row.wallet || row.Wallet || row.address || row.Address || '',
+          amount: row.amount || row.Amount || row.salary || row.Salary || '',
+        })).filter(r => r.wallet);
+        if (parsed.length > 0) {
+          setEmployees(parsed);
+          setUsedDemo(true);
+        }
+      },
+    });
+    e.target.value = '';
   }
 
   function addEmployee() {
@@ -110,9 +163,9 @@ export function CreatePayrollPage() {
     employees.forEach((e, i) => {
       if (!e.wallet) errs[`emp_${i}_wallet`] = 'Required';
       else if (!isValidSuiAddress(e.wallet)) errs[`emp_${i}_wallet`] = 'Invalid Sui address (0x + 64 hex)';
-     if (!e.amount) errs[`emp_${i}_amount`] = 'Required';
-else if (parseFloat(e.amount) <= 0) errs[`emp_${i}_amount`] = 'Must be > 0';
-else if (parseFloat(e.amount) < 0.001) errs[`emp_${i}_amount`] = 'Amount too low — minimum 0.001 SUI';
+      if (!e.amount) errs[`emp_${i}_amount`] = 'Required';
+      else if (parseFloat(e.amount) <= 0) errs[`emp_${i}_amount`] = 'Must be > 0';
+      else if (parseFloat(e.amount) < 0.001) errs[`emp_${i}_amount`] = 'Amount too low — minimum 0.001 SUI';
     });
     if (!payday) errs.payday = 'Required';
     else if (new Date(payday) <= new Date()) errs.payday = 'Must be in the future';
@@ -127,7 +180,7 @@ else if (parseFloat(e.amount) < 0.001) errs[`emp_${i}_amount`] = 'Amount too low
 
   async function handleSubmit() {
     if (!account) return;
-    const form: CreateBatchForm = { employees, token_type: tokenType, payday };
+    const form: CreateBatchForm = { name: batchName, employees, token_type: tokenType, payday };
     const digest = await createBatch(form);
     if (digest) {
       setTimeout(() => navigate('/dashboard'), 3000);
@@ -139,6 +192,12 @@ else if (parseFloat(e.amount) < 0.001) errs[`emp_${i}_amount`] = 'Amount too low
       <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 animate-fade-in">
         <SectionHeader title="Confirm Payroll" description="Review before depositing funds on-chain" />
         <Card className="mb-6">
+          {batchName && (
+            <div className="flex justify-between items-center mb-4 pb-4 border-b border-slate-800">
+              <span className="text-slate-400 text-sm font-display">Payroll Name</span>
+              <span className="font-mono text-slate-100 font-semibold">{batchName}</span>
+            </div>
+          )}
           <div className="flex justify-between items-center mb-4 pb-4 border-b border-slate-800">
             <span className="text-slate-400 text-sm font-display">Token</span>
             <span className="font-mono text-slate-100 font-semibold">{tokenType}</span>
@@ -190,9 +249,87 @@ else if (parseFloat(e.amount) < 0.001) errs[`emp_${i}_amount`] = 'Amount too low
       <SectionHeader
         title="Create Payroll Batch"
         description="Add employees, set payday, and deposit funds on-chain"
-        action={!usedDemo && <Button variant="ghost" size="sm" onClick={loadDemo}>Load demo data</Button>}
+       action={
+  <div className="flex items-center gap-2">
+    <button
+      onClick={() => setShowTemplates(!showTemplates)}
+      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-display font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all"
+    >
+      📋 Templates {templates.length > 0 && `(${templates.length})`}
+    </button>
+    {!usedDemo && (
+      <Button variant="ghost" size="sm" onClick={loadDemo}>Load demo</Button>
+    )}
+    <label className="cursor-pointer">
+      <input type="file" accept=".csv" className="hidden" onChange={handleCSV} />
+      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-display font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all cursor-pointer">
+        ⬆ Upload CSV
+      </span>
+    </label>
+  </div>
+}
       />
+      {/* Templates dropdown */}
+{showTemplates && (
+  <div className="mb-4 bg-slate-900 border border-slate-700 rounded-2xl p-4">
+    <h3 className="font-display font-semibold text-slate-200 text-sm mb-3">Saved Templates</h3>
+    {templates.length === 0 ? (
+      <p className="text-slate-500 text-sm">No templates saved yet. Fill the form and save it as a template.</p>
+    ) : (
+      <div className="flex flex-col gap-2">
+        {templates.map(t => (
+          <div key={t.id} className="flex items-center justify-between bg-slate-800 rounded-xl px-4 py-3">
+            <div>
+              <p className="text-slate-100 font-display font-medium text-sm">{t.name}</p>
+              <p className="text-slate-500 text-xs">{t.employees.length} employees · {t.token_type}</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handleLoadTemplate(t)}
+                className="text-xs bg-sky-500/20 text-sky-400 border border-sky-500/30 rounded-lg px-3 py-1.5 hover:bg-sky-500/30 transition-all font-display"
+              >
+                Load
+              </button>
+              <button
+                onClick={() => handleDeleteTemplate(t.id)}
+                className="text-xs text-red-400 hover:text-red-300 transition-colors"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
+)}
+
+{/* Save as template */}
+{showSaveTemplate && (
+  <div className="mb-4 bg-slate-900 border border-slate-700 rounded-2xl p-4">
+    <h3 className="font-display font-semibold text-slate-200 text-sm mb-3">Save as Template</h3>
+    <div className="flex gap-2">
+      <Input
+        placeholder="Template name e.g. Engineering Team"
+        value={templateName}
+        onChange={e => setTemplateName(e.target.value)}
+        className="flex-1"
+      />
+      <Button size="sm" onClick={handleSaveTemplate}>Save</Button>
+      <Button size="sm" variant="secondary" onClick={() => setShowSaveTemplate(false)}>Cancel</Button>
+    </div>
+  </div>
+)}
+
       <Card className="mb-6">
+        <div className="mb-4">
+          <Input
+            label="Payroll Name (optional)"
+            placeholder="e.g. May 2026 Engineering Team"
+            value={batchName}
+            onChange={e => setBatchName(e.target.value)}
+          />
+        </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="text-xs font-display font-semibold text-slate-400 uppercase tracking-wider block mb-2">Token Type</label>
@@ -207,10 +344,11 @@ else if (parseFloat(e.amount) < 0.001) errs[`emp_${i}_amount`] = 'Amount too low
               ))}
             </div>
           </div>
-          <Input label="Payday Date" type="date" value={payday}
-            min={new Date().toISOString().split('T')[0]}
-            onChange={e => { setPayday(e.target.value); setErrors(p => { const n = { ...p }; delete n.payday; return n; }); }}
+          <DatePicker
+            value={payday}
+            onChange={(date) => { setPayday(date); setErrors(p => { const n = { ...p }; delete n.payday; return n; }); }}
             error={errors.payday}
+            min={new Date().toISOString().split('T')[0]}
           />
         </div>
       </Card>
@@ -240,32 +378,32 @@ else if (parseFloat(e.amount) < 0.001) errs[`emp_${i}_amount`] = 'Amount too low
                   error={errors[`emp_${idx}_wallet`]}
                 />
                 <div className="flex flex-col gap-1.5">
-  <div className="relative">
-    <input
-      placeholder="0.0"
-      type="number"
-      min="0"
-      step="0.001"
-      value={emp.amount}
-      onChange={e => updateEmployee(idx, 'amount', e.target.value)}
-      className="w-full bg-slate-800/60 border border-slate-700/60 rounded-xl px-4 py-2.5 text-sm text-slate-100 font-mono focus:outline-none focus:ring-2 focus:ring-sky-500/50 pr-14"
-    />
-    <button
-      onClick={() => {
-        if (balance) {
-          const remaining = Number(balance) / 1e9;
-          updateEmployee(idx, 'amount', remaining.toFixed(4));
-        }
-      }}
-      className="absolute right-2 top-1/2 -translate-y-1/2 text-xs bg-sky-500/20 text-sky-400 border border-sky-500/30 rounded-lg px-2 py-1 hover:bg-sky-500/30 transition-all font-display"
-    >
-      Max
-    </button>
-  </div>
-  {errors[`emp_${idx}_amount`] && (
-    <p className="text-xs text-red-400 font-mono">{errors[`emp_${idx}_amount`]}</p>
-  )}
-</div>
+                  <div className="relative">
+                    <input
+                      placeholder="0.0"
+                      type="number"
+                      min="0"
+                      step="0.001"
+                      value={emp.amount}
+                      onChange={e => updateEmployee(idx, 'amount', e.target.value)}
+                      className="w-full bg-slate-800/60 border border-slate-700/60 rounded-xl px-4 py-2.5 text-sm text-slate-100 font-mono focus:outline-none focus:ring-2 focus:ring-sky-500/50 pr-14"
+                    />
+                    <button
+                      onClick={() => {
+                        if (balance) {
+                          const remaining = Number(balance) / 1e9;
+                          updateEmployee(idx, 'amount', remaining.toFixed(4));
+                        }
+                      }}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-xs bg-sky-500/20 text-sky-400 border border-sky-500/30 rounded-lg px-2 py-1 hover:bg-sky-500/30 transition-all font-display"
+                    >
+                      Max
+                    </button>
+                  </div>
+                  {errors[`emp_${idx}_amount`] && (
+                    <p className="text-xs text-red-400 font-mono">{errors[`emp_${idx}_amount`]}</p>
+                  )}
+                </div>
               </div>
             </div>
           ))}
@@ -291,8 +429,9 @@ else if (parseFloat(e.amount) < 0.001) errs[`emp_${i}_amount`] = 'Amount too low
       </div>
 
       <div className="flex gap-3">
-        <Button variant="secondary" onClick={() => navigate('/dashboard')}>Cancel</Button>
-        <Button className="flex-1" onClick={handleNext}>Review & Confirm →</Button>
+          <Button variant="secondary" onClick={() => navigate('/dashboard')}>Cancel</Button>
+  <Button variant="secondary" onClick={() => setShowSaveTemplate(true)}>💾 Save Template</Button>
+  <Button className="flex-1" onClick={handleNext}>Review & Confirm →</Button>
       </div>
     </div>
   );

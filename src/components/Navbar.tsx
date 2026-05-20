@@ -21,9 +21,17 @@ export function Navbar() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-6">
         {/* Logo */}
         <Link to={account ? '/dashboard' : '/'} className="flex items-center gap-2.5 shrink-0">
-          <div className="w-8 h-8 rounded-lg bg-sky-500 flex items-center justify-center shadow-lg shadow-sky-500/30">
-            <span className="text-white font-display font-black text-sm">SP</span>
-          </div>
+         <svg width="32" height="32" viewBox="0 0 680 680" style={{ borderRadius: 8 }}>
+  <rect width="680" height="680" fill="#0a0f1e" rx="120"/>
+  <circle cx="340" cy="340" r="120" fill="none" stroke="#38bdf8" strokeWidth="4"/>
+  <circle cx="340" cy="340" r="16" fill="#38bdf8"/>
+  <line x1="436" y1="254" x2="508" y2="182" stroke="#38bdf8" strokeWidth="4" strokeLinecap="round"/>
+  <circle cx="524" cy="166" r="14" fill="#38bdf8"/>
+  <line x1="460" y1="340" x2="532" y2="340" stroke="#38bdf8" strokeWidth="4" strokeLinecap="round"/>
+  <circle cx="548" cy="340" r="14" fill="#38bdf8"/>
+  <line x1="436" y1="426" x2="508" y2="498" stroke="#38bdf8" strokeWidth="4" strokeLinecap="round"/>
+  <circle cx="524" cy="514" r="14" fill="#38bdf8"/>
+</svg>
           <span className="font-display font-bold text-slate-100 text-base hidden sm:block">SuiPayroll</span>
         </Link>
 

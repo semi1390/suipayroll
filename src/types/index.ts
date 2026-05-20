@@ -37,6 +37,7 @@ export interface EmployeeFormRow {
 }
 
 export interface CreateBatchForm {
+  name?: string;
   employees: EmployeeFormRow[];
   token_type: 'SUI' | 'USDC';
   payday: string; // ISO date string

@@ -40,7 +40,7 @@ export function Card({ children, className, hover, onClick }: CardProps) {
     <div
       onClick={onClick}
       className={cn(
-        'bg-slate-900/80 border border-slate-800/80 rounded-2xl p-6 backdrop-blur-sm',
+       'bg-slate-900/80 border border-slate-800/80 rounded-2xl p-6 backdrop-blur-sm overflow-visible',
         hover && 'hover:border-slate-700 hover:bg-slate-900 transition-all cursor-pointer',
         className
       )}

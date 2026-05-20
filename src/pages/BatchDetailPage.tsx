@@ -57,7 +57,7 @@ export function BatchDetailPage() {
 
   async function handleCancel() {
     setShowCancelConfirm(false);
-    await cancelBatch(batch!.id);
+   await cancelBatch(batch!.id, batch!.token_type);
     navigate('/dashboard');
   }
 

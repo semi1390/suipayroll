@@ -33,6 +33,25 @@ export function useEmployerBatches() {
     },
   });
 }
+/** Fetch USDC balance for the connected wallet */
+export function useUSDCBalance() {
+  const account = useCurrentAccount();
+  const client = useSuiClient();
+
+  return useQuery({
+    queryKey: ['usdc-balance', account?.address],
+    enabled: !!account?.address,
+    refetchInterval: 10_000,
+    queryFn: async (): Promise<bigint> => {
+      if (!account?.address) return 0n;
+      const balance = await client.getBalance({
+        owner: account.address,
+        coinType: '0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC',
+      });
+      return BigInt(balance.totalBalance);
+    },
+  });
+}
 
 /** Fetch all PayslipNFT objects owned by the connected wallet */
 export function useEmployeePayslips() {

@@ -3,13 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { useSuiClient, useCurrentAccount } from '@mysten/dapp-kit';
 import { EmployeeFormRow, CreateBatchForm } from '../types';
 import { useCreateBatch } from '../hooks/useTransactions';
-import { useSuiBalance, useValidateAddress } from '../hooks/useSuiData';
+import { useSuiBalance, useValidateAddress, useUSDCBalance } from '../hooks/useSuiData';
 import { Button, Input, Card, TxSuccessBanner, TxErrorBanner, SectionHeader } from '../components/ui';
 import { isValidSuiAddress, suiToMist, mistToSui, cn } from '../utils/helpers';
 import { DEMO_EMPLOYEES, DEMO_PAYDAY, DEMO_TOKEN_TYPE } from '../utils/demo';
 import { DatePicker } from '../components/DatePicker';
 import Papa from 'papaparse';
 import { getTemplates, saveTemplate, deleteTemplate, PayrollTemplate } from '../utils/templates';
+
 
 const EMPTY_EMPLOYEE: EmployeeFormRow = { wallet: '', amount: '', name: '' };
 
@@ -76,6 +77,7 @@ export function CreatePayrollPage() {
   const client = useSuiClient();
   const { createBatch, txState, resetTx } = useCreateBatch(client);
   const { data: balance } = useSuiBalance();
+  const { data: usdcBalance } = useUSDCBalance();
 
   const [employees, setEmployees] = useState<EmployeeFormRow[]>([{ ...EMPTY_EMPLOYEE }]);
   const [tokenType, setTokenType] = useState<'SUI' | 'USDC'>('SUI');
@@ -90,8 +92,11 @@ const [showSaveTemplate, setShowSaveTemplate] = useState(false);
 const [templateName, setTemplateName] = useState('');
 
   const totalSui = employees.reduce((acc, e) => acc + (parseFloat(e.amount) || 0), 0);
-  const totalMist = suiToMist(totalSui);
-  const hasEnoughBalance = balance !== undefined && balance >= totalMist;
+const totalMist = suiToMist(totalSui);
+const totalUSDC = BigInt(Math.round(totalSui * 1_000_000));
+const activeBalance = tokenType === 'USDC' ? usdcBalance : balance;
+const activeRequired = tokenType === 'USDC' ? totalUSDC : totalMist;
+const hasEnoughBalance = activeBalance !== undefined && activeBalance >= activeRequired;
 
   function loadDemo() {
     setEmployees(DEMO_EMPLOYEES.map(e => ({ ...e })));
@@ -237,7 +242,7 @@ function handleDeleteTemplate(id: string) {
             ← Back
           </Button>
           <Button className="flex-1" onClick={handleSubmit} loading={txState.status === 'pending'} disabled={txState.status === 'success'}>
-            {txState.status === 'pending' ? 'Depositing funds...' : `Deposit ${totalSui.toFixed(4)} SUI & Create Batch`}
+            {txState.status === 'pending' ? 'Depositing funds...' : `Deposit ${totalSui.toFixed(4)} ${tokenType} & Create Batch`}
           </Button>
         </div>
       </div>
@@ -388,13 +393,16 @@ function handleDeleteTemplate(id: string) {
                       onChange={e => updateEmployee(idx, 'amount', e.target.value)}
                       className="w-full bg-slate-800/60 border border-slate-700/60 rounded-xl px-4 py-2.5 text-sm text-slate-100 font-mono focus:outline-none focus:ring-2 focus:ring-sky-500/50 pr-14"
                     />
-                    <button
-                      onClick={() => {
-                        if (balance) {
-                          const remaining = Number(balance) / 1e9;
-                          updateEmployee(idx, 'amount', remaining.toFixed(4));
-                        }
-                      }}
+                   <button
+  onClick={() => {
+    if (tokenType === 'USDC' && usdcBalance) {
+      const remaining = Number(usdcBalance) / 1_000_000;
+      updateEmployee(idx, 'amount', remaining.toFixed(2));
+    } else if (balance) {
+      const remaining = Number(balance) / 1e9;
+      updateEmployee(idx, 'amount', remaining.toFixed(4));
+    }
+  }}
                       className="absolute right-2 top-1/2 -translate-y-1/2 text-xs bg-sky-500/20 text-sky-400 border border-sky-500/30 rounded-lg px-2 py-1 hover:bg-sky-500/30 transition-all font-display"
                     >
                       Max
@@ -416,12 +424,15 @@ function handleDeleteTemplate(id: string) {
       <div className="flex items-center justify-between bg-slate-900 border border-slate-800 rounded-2xl px-5 py-4 mb-6">
         <div>
           <p className="text-xs text-slate-500 font-display uppercase tracking-wider mb-1">Total Required</p>
-          <p className="text-2xl font-display font-extrabold text-sky-400">{totalSui.toFixed(4)} SUI</p>
+         <p className="text-2xl font-display font-extrabold text-sky-400">{totalSui.toFixed(4)} {tokenType}</p>
         </div>
         <div className="text-right">
           {balance !== undefined && (
             <p className={cn('text-sm font-mono', hasEnoughBalance ? 'text-emerald-400' : 'text-red-400')}>
-              Balance: {mistToSui(balance)} SUI {hasEnoughBalance ? '✓' : '✗'}
+              Balance: {tokenType === 'USDC' 
+  ? `${(Number(usdcBalance ?? 0n) / 1_000_000).toFixed(2)} USDC` 
+  : `${mistToSui(balance ?? 0n)} SUI`
+} {hasEnoughBalance ? '✓' : '✗'}
             </p>
           )}
           {errors.balance && <p className="text-xs text-red-400 mt-1">{errors.balance}</p>}

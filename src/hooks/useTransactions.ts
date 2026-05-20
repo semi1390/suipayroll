@@ -19,26 +19,57 @@ export function useCreateBatch(client: SuiClient) {
       const tx = new Transaction();
       tx.setSender(account.address);
 
-      const wallets = form.employees.map(e => e.wallet);
-      const amounts = form.employees.map(e => suiToMist(e.amount));
-      const totalMist = amounts.reduce((a, b) => a + b, 0n);
+    const wallets = form.employees.map(e => e.wallet);
+const isUSDC = form.token_type === 'USDC';
+const amounts = form.employees.map(e => 
+  isUSDC 
+    ? BigInt(Math.round(parseFloat(e.amount) * 1_000_000))
+    : suiToMist(e.amount)
+);
+const totalMist = amounts.reduce((a, b) => a + b, 0n);
 
       // Split coin from gas payment for treasury deposit
-      const [coin] = tx.splitCoins(tx.gas, [tx.pure.u64(totalMist)]);
+    const USDC_TYPE = '0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC';
+
+let coin;
+if (form.token_type === 'USDC') {
+  // Get USDC coins from wallet
+  const usdcCoins = await client.getCoins({
+    owner: account.address,
+    coinType: USDC_TYPE,
+  });
+  if (!usdcCoins.data.length) throw new Error('No USDC coins found in wallet');
+  
+  const totalUSDC = totalMist;
+  const primaryCoin = tx.object(usdcCoins.data[0].coinObjectId);
+  
+  // If multiple USDC coins, merge them first
+  if (usdcCoins.data.length > 1) {
+    tx.mergeCoins(primaryCoin, usdcCoins.data.slice(1).map(c => tx.object(c.coinObjectId)));
+  }
+  
+  [coin] = tx.splitCoins(primaryCoin, [tx.pure.u64(totalUSDC)]);
+} else {
+  [coin] = tx.splitCoins(tx.gas, [tx.pure.u64(totalMist)]);
+}
 
       const paydayMs = dateToTimestampMs(form.payday);
+const coinType = form.token_type === 'USDC'
+ ? '0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC'
+  : '0x2::sui::SUI';
 
-      tx.moveCall({
-        target: FN.CREATE_BATCH,
-        arguments: [
-          tx.pure.vector('address', wallets),
-          tx.pure.vector('u64', amounts.map(a => a)),
-          tx.pure.vector('u8', Array.from(new TextEncoder().encode(form.token_type))),
-          tx.pure.u64(paydayMs),
-          coin,
-          tx.object('0x6'), // Sui Clock object
-        ],
-      });
+tx.moveCall({
+  target: FN.CREATE_BATCH,
+  typeArguments: [coinType],
+  arguments: [
+    tx.pure.vector('address', wallets),
+    tx.pure.vector('u64', amounts.map(a => a)),
+    tx.pure.vector('u8', Array.from(new TextEncoder().encode(form.token_type))),
+    tx.pure.u64(paydayMs),
+    coin,
+    tx.object('0x6'),
+  ],
+});
 
       const result = await signAndExecute({ transaction: tx });
       const digest = result.digest;
@@ -68,21 +99,26 @@ export function useExecutePayroll(client: SuiClient) {
   const { mutateAsync: signAndExecute } = useSignAndExecuteTransaction();
   const [txState, setTxState] = useState<TxState>({ status: 'idle' });
 
-  const executePayroll = useCallback(async (batch: PayrollBatch): Promise<string | null> => {
-    if (!account?.address) return null;
-    setTxState({ status: 'pending' });
+const executePayroll = useCallback(async (batch: PayrollBatch): Promise<string | null> => {
+  if (!account?.address) return null;
+  setTxState({ status: 'pending' });
 
-    try {
-      const tx = new Transaction();
-      tx.setSender(account.address);
+  try {
+    const tx = new Transaction();
+    tx.setSender(account.address);
 
-      tx.moveCall({
-        target: FN.EXECUTE_PAYROLL,
-        arguments: [
-          tx.object(batch.id),
-          tx.object('0x6'), // Sui Clock object
-        ],
-      });
+    const coinType = batch.token_type === 'USDC'
+      ? '0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC'
+      : '0x2::sui::SUI';
+
+    tx.moveCall({
+      target: FN.EXECUTE_PAYROLL,
+      typeArguments: [coinType],
+      arguments: [
+        tx.object(batch.id),
+        tx.object('0x6'),
+      ],
+    });
 
       const result = await signAndExecute({ transaction: tx });
       const digest = result.digest;
@@ -106,18 +142,20 @@ export function useCancelBatch(client: SuiClient) {
   const { mutateAsync: signAndExecute } = useSignAndExecuteTransaction();
   const [txState, setTxState] = useState<TxState>({ status: 'idle' });
 
-  const cancelBatch = useCallback(async (batchId: string): Promise<string | null> => {
+ const cancelBatch = useCallback(async (batchId: string, tokenType: string = 'SUI'): Promise<string | null> => {
     if (!account?.address) return null;
     setTxState({ status: 'pending' });
 
     try {
       const tx = new Transaction();
       tx.setSender(account.address);
+const coinType = '0x2::sui::SUI'; // or read from batch
 
-      tx.moveCall({
-        target: FN.CANCEL_BATCH,
-        arguments: [tx.object(batchId)],
-      });
+tx.moveCall({
+  target: FN.CANCEL_BATCH,
+  typeArguments: [coinType],
+  arguments: [tx.object(batchId)],
+});
 
       const result = await signAndExecute({ transaction: tx });
       const digest = result.digest;

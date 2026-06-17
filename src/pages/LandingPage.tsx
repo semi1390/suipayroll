@@ -144,14 +144,14 @@ export function LandingPage() {
       <div className="relative z-10">
 
         {/* ── HERO ── */}
-        <section className="min-h-screen flex flex-col items-center justify-center text-center px-4 pt-20 pb-32">
+        <section className="min-h-screen flex flex-col items-center justify-center text-center px-4 pt-12 pb-20">
 
           {/* Logo */}
           <motion.div
             initial={{ opacity: 0, scale: 0.8 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.5 }}
-            className="flex items-center gap-3 mb-12"
+           className="flex items-center gap-3 mb-8"
           >
             <NodeLogo size={48} />
             <span className="font-display font-bold text-slate-100 text-2xl tracking-tight">SuiPayroll</span>
@@ -173,7 +173,7 @@ export function LandingPage() {
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2, duration: 0.6 }}
-            className="font-display font-extrabold text-6xl sm:text-8xl text-slate-100 leading-[0.9] tracking-tight mb-6 max-w-5xl"
+           className="font-display font-extrabold text-4xl sm:text-8xl text-slate-100 leading-[0.9] tracking-tight mb-6 max-w-5xl"
           >
             Payroll,
             <br />

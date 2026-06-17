@@ -16,16 +16,16 @@ export function BatchCard({ batch }: BatchCardProps) {
       onClick={() => navigate(`/batch/${batch.id}`)}
       className="flex flex-col gap-4"
     >
-      <div className="flex items-start justify-between">
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-2">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-col gap-1 min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="font-mono text-xs text-slate-500">{batch.id.slice(0, 10)}...</span>
             <Badge variant={batch.executed ? 'success' : 'pending'}>
               {batch.executed ? '✓ Executed' : '⏳ Pending'}
             </Badge>
             <Badge variant="sui">{batch.token_type}</Badge>
           </div>
-          <div className="flex items-center gap-2 mt-1">
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
             <span className="text-slate-400 text-sm">Employer:</span>
             <span className="font-mono text-slate-300 text-sm">{shortAddress(batch.employer)}</span>
             <div onClick={e => e.stopPropagation()}>
@@ -33,13 +33,13 @@ export function BatchCard({ batch }: BatchCardProps) {
             </div>
           </div>
         </div>
-        <div className="text-right">
-          <p className="font-display font-bold text-sky-400 text-lg">
-  {batch.token_type === 'USDC'
-    ? `${(Number(batch.total_amount) / 1_000_000).toFixed(2)} USDC`
-    : formatSui(batch.total_amount)
-  }
-</p>
+        <div className="text-right shrink-0">
+          <p className="font-display font-bold text-sky-400 text-lg whitespace-nowrap">
+            {batch.token_type === 'USDC'
+              ? `${(Number(batch.total_amount) / 1_000_000).toFixed(2)} USDC`
+              : formatSui(batch.total_amount)
+            }
+          </p>
           <p className="text-xs text-slate-500">{batch.employees.length} employees</p>
         </div>
       </div>
@@ -49,7 +49,7 @@ export function BatchCard({ batch }: BatchCardProps) {
           <span>Created {formatDate(batch.created_at)}</span>
           {!batch.executed && (
             <span className="text-amber-400 font-mono">
-              ⏰ {countdownTo(batch.payday)}
+              {countdownTo(batch.payday)}
             </span>
           )}
         </div>

@@ -5,13 +5,15 @@ import { Transaction } from '@mysten/sui/transactions';
 import { EmployeeFormRow, CreateBatchForm } from '../types';
 import { useCreateBatch } from '../hooks/useTransactions';
 import { useSuiBalance, useValidateAddress, useUSDCBalance } from '../hooks/useSuiData';
-import { Button, Input, Card, TxSuccessBanner, TxErrorBanner, SectionHeader } from '../components/ui';
+import { Button, Input, Card, TxSuccessBanner, TxErrorBanner } from '../components/ui';
 import { isValidSuiAddress, suiToMist, mistToSui, cn, dateToTimestampMs } from '../utils/helpers';
 import { DEMO_EMPLOYEES, DEMO_PAYDAY, DEMO_TOKEN_TYPE } from '../utils/demo';
 import { DatePicker } from '../components/DatePicker';
 import { FN } from '../utils/contract';
 import Papa from 'papaparse';
 import { getTemplates, saveTemplate, deleteTemplate, PayrollTemplate } from '../utils/templates';
+import { motion } from 'framer-motion';
+import { LayoutTemplate, Upload, Save, Fuel, Plus, X, AlertTriangle } from 'lucide-react';
 
 const EMPTY_EMPLOYEE: EmployeeFormRow = { wallet: '', amount: '', name: '' };
 const USDC_TYPE = '0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC';
@@ -52,8 +54,13 @@ function WalletInput({ value, onChange, error }: {
         </div>
       </div>
       {value && !isValid && <p className="text-xs text-red-400 font-mono">Invalid address — must be 0x followed by 64 hex characters</p>}
-      {value && isValid && !checking && hasActivity === false && <p className="text-xs text-amber-400">⚠️ No transaction history on Sui testnet — double check this address</p>}
-      {value && isValid && !checking && hasActivity && <p className="text-xs text-emerald-400">✓ Active Sui address</p>}
+      {value && isValid && !checking && hasActivity === false && (
+        <div className="flex items-center gap-1.5">
+          <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0" />
+          <p className="text-xs text-amber-400">No transaction history on Sui testnet — double check this address</p>
+        </div>
+      )}
+      {value && isValid && !checking && hasActivity && <p className="text-xs text-emerald-400">Active Sui address</p>}
       {error && <p className="text-xs text-red-400 font-mono">{error}</p>}
     </div>
   );
@@ -135,59 +142,51 @@ export function CreatePayrollPage() {
   }
 
   async function estimateGas() {
-  if (!account?.address || employees.length === 0 || !payday) return;
-  setEstimating(true);
-  try {
-    const tx = new Transaction();
-    tx.setSender(account.address);
-    const isUSDC = tokenType === 'USDC';
-    const amounts = employees.map(e =>
-      isUSDC
-        ? BigInt(Math.round(parseFloat(e.amount || '0') * 1_000_000))
-        : suiToMist(e.amount || '0')
-    );
-    const total = amounts.reduce((a, b) => a + b, 0n);
-
-    let coin;
-    if (isUSDC) {
-      const usdcCoins = await client.getCoins({
-        owner: account.address,
-        coinType: USDC_TYPE,
-      });
-      if (!usdcCoins.data.length) throw new Error('No USDC');
-      const primaryCoin = tx.object(usdcCoins.data[0].coinObjectId);
-      if (usdcCoins.data.length > 1) {
-        tx.mergeCoins(primaryCoin, usdcCoins.data.slice(1).map(c => tx.object(c.coinObjectId)));
+    if (!account?.address || employees.length === 0 || !payday) return;
+    setEstimating(true);
+    try {
+      const tx = new Transaction();
+      tx.setSender(account.address);
+      const isUSDC = tokenType === 'USDC';
+      const amounts = employees.map(e =>
+        isUSDC
+          ? BigInt(Math.round(parseFloat(e.amount || '0') * 1_000_000))
+          : suiToMist(e.amount || '0')
+      );
+      const total = amounts.reduce((a, b) => a + b, 0n);
+      let coin;
+      if (isUSDC) {
+        const usdcCoins = await client.getCoins({ owner: account.address, coinType: USDC_TYPE });
+        if (!usdcCoins.data.length) throw new Error('No USDC');
+        const primaryCoin = tx.object(usdcCoins.data[0].coinObjectId);
+        if (usdcCoins.data.length > 1) {
+          tx.mergeCoins(primaryCoin, usdcCoins.data.slice(1).map(c => tx.object(c.coinObjectId)));
+        }
+        [coin] = tx.splitCoins(primaryCoin, [tx.pure.u64(total)]);
+      } else {
+        [coin] = tx.splitCoins(tx.gas, [tx.pure.u64(total)]);
       }
-      [coin] = tx.splitCoins(primaryCoin, [tx.pure.u64(total)]);
-    } else {
-      [coin] = tx.splitCoins(tx.gas, [tx.pure.u64(total)]);
+      tx.moveCall({
+        target: FN.CREATE_BATCH,
+        typeArguments: [isUSDC ? USDC_TYPE : '0x2::sui::SUI'],
+        arguments: [
+          tx.pure.vector('address', employees.map(e => e.wallet || account.address)),
+          tx.pure.vector('u64', amounts),
+          tx.pure.vector('u8', Array.from(new TextEncoder().encode(tokenType))),
+          tx.pure.u64(dateToTimestampMs(payday)),
+          coin,
+          tx.object('0x6'),
+        ],
+      });
+      const dryRun = await client.dryRunTransactionBlock({ transactionBlock: await tx.build({ client }) });
+      const gas = dryRun.effects.gasUsed;
+      const totalGas = BigInt(gas.computationCost) + BigInt(gas.storageCost) - BigInt(gas.storageRebate);
+      setGasEstimate(`~${(Number(totalGas) / 1e9).toFixed(6)} SUI`);
+    } catch {
+      setGasEstimate('Unable to estimate');
     }
-
-    tx.moveCall({
-      target: FN.CREATE_BATCH,
-      typeArguments: [isUSDC ? USDC_TYPE : '0x2::sui::SUI'],
-      arguments: [
-        tx.pure.vector('address', employees.map(e => e.wallet || account.address)),
-        tx.pure.vector('u64', amounts),
-        tx.pure.vector('u8', Array.from(new TextEncoder().encode(tokenType))),
-        tx.pure.u64(dateToTimestampMs(payday)),
-        coin,
-        tx.object('0x6'),
-      ],
-    });
-
-    const dryRun = await client.dryRunTransactionBlock({
-      transactionBlock: await tx.build({ client }),
-    });
-    const gas = dryRun.effects.gasUsed;
-    const totalGas = BigInt(gas.computationCost) + BigInt(gas.storageCost) - BigInt(gas.storageRebate);
-    setGasEstimate(`~${(Number(totalGas) / 1e9).toFixed(6)} SUI`);
-  } catch {
-    setGasEstimate('Unable to estimate');
+    setEstimating(false);
   }
-  setEstimating(false);
-}
 
   function addEmployee() { setEmployees(prev => [...prev, { ...EMPTY_EMPLOYEE }]); }
   function removeEmployee(idx: number) { setEmployees(prev => prev.filter((_, i) => i !== idx)); }
@@ -223,8 +222,11 @@ export function CreatePayrollPage() {
 
   if (step === 'confirm') {
     return (
-      <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 animate-fade-in">
-        <SectionHeader title="Confirm Payroll" description="Review before depositing funds on-chain" />
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="max-w-2xl mx-auto px-4 sm:px-6 py-8">
+        <div className="mb-6">
+          <h2 className="text-xl font-display font-bold text-slate-100">Confirm Payroll</h2>
+          <p className="text-sm text-slate-400 mt-1">Review before depositing funds on-chain</p>
+        </div>
         <Card className="mb-6">
           {batchName && (
             <div className="flex justify-between items-center mb-4 pb-4 border-b border-slate-800">
@@ -238,7 +240,7 @@ export function CreatePayrollPage() {
           </div>
           <div className="flex justify-between items-center mb-4 pb-4 border-b border-slate-800">
             <span className="text-slate-400 text-sm font-display">Payday</span>
-            <span className="font-mono text-slate-100">{new Date(payday).toLocaleDateString('en-US', { dateStyle: 'long' })}</span>
+            <span className="font-mono text-slate-100 text-right">{new Date(payday).toLocaleDateString('en-US', { dateStyle: 'long' })}</span>
           </div>
           <div className="flex justify-between items-center mb-6 pb-4 border-b border-slate-800">
             <span className="text-slate-400 text-sm font-display">Employees</span>
@@ -246,12 +248,12 @@ export function CreatePayrollPage() {
           </div>
           <div className="space-y-2 mb-6">
             {employees.map((e, i) => (
-              <div key={i} className="flex items-center justify-between bg-slate-800/50 rounded-xl px-3 py-2.5">
-                <div>
-                  {e.name && <p className="text-xs text-slate-400 mb-0.5">{e.name}</p>}
-                  <p className="font-mono text-xs text-slate-300">{e.wallet.slice(0, 14)}...{e.wallet.slice(-6)}</p>
+              <div key={i} className="flex items-center justify-between bg-slate-800/50 rounded-xl px-3 py-2.5 gap-2">
+                <div className="min-w-0">
+                  {e.name && <p className="text-xs text-slate-400 mb-0.5 truncate">{e.name}</p>}
+                  <p className="font-mono text-xs text-slate-300 truncate">{e.wallet.slice(0, 14)}...{e.wallet.slice(-6)}</p>
                 </div>
-                <span className="font-display font-semibold text-sky-400 text-sm">{e.amount} {tokenType}</span>
+                <span className="font-display font-semibold text-sky-400 text-sm shrink-0">{e.amount} {tokenType}</span>
               </div>
             ))}
           </div>
@@ -269,38 +271,44 @@ export function CreatePayrollPage() {
         <div className="flex gap-3">
           <Button variant="secondary" onClick={() => setStep('form')} disabled={txState.status === 'pending'}>← Back</Button>
           <Button className="flex-1" onClick={handleSubmit} loading={txState.status === 'pending'} disabled={txState.status === 'success'}>
-            {txState.status === 'pending' ? 'Depositing funds...' : `Deposit ${totalSui.toFixed(4)} ${tokenType} & Create Batch`}
+            {txState.status === 'pending' ? 'Depositing...' : `Deposit ${totalSui.toFixed(4)} ${tokenType} & Create`}
           </Button>
         </div>
-      </div>
+      </motion.div>
     );
   }
 
   return (
-    <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 animate-fade-in">
-      <SectionHeader
-        title="Create Payroll Batch"
-        description="Add employees, set payday, and deposit funds on-chain"
-        action={
-          <div className="flex items-center gap-2">
-            <button onClick={() => setShowTemplates(!showTemplates)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-display font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all">
-              📋 Templates {templates.length > 0 && `(${templates.length})`}
-            </button>
-            {!usedDemo && <Button variant="ghost" size="sm" onClick={loadDemo}>Load demo</Button>}
-            <label className="cursor-pointer">
-              <input type="file" accept=".csv" className="hidden" onChange={handleCSV} />
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-display font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all cursor-pointer">
-                ⬆ Upload CSV
-              </span>
-            </label>
-          </div>
-        }
-      />
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
+
+      {/* Header */}
+      <div className="flex items-start justify-between gap-3 mb-6">
+        <div>
+          <h2 className="text-xl font-display font-bold text-slate-100">Create Payroll Batch</h2>
+          <p className="text-sm text-slate-400 mt-1">Add employees, set payday, and deposit funds on-chain</p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setShowTemplates(!showTemplates)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-display font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all"
+          >
+            <LayoutTemplate className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Templates</span>
+            {templates.length > 0 && <span className="bg-sky-500/20 text-sky-400 text-xs px-1.5 py-0.5 rounded-full">{templates.length}</span>}
+          </button>
+          <label className="cursor-pointer">
+            <input type="file" accept=".csv" className="hidden" onChange={handleCSV} />
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-display font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all cursor-pointer">
+              <Upload className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">CSV</span>
+            </span>
+          </label>
+        </div>
+      </div>
 
       {/* Templates dropdown */}
       {showTemplates && (
-        <div className="mb-4 bg-slate-900 border border-slate-700 rounded-2xl p-4">
+        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mb-4 bg-slate-900 border border-slate-700 rounded-2xl p-4">
           <h3 className="font-display font-semibold text-slate-200 text-sm mb-3">Saved Templates</h3>
           {templates.length === 0 ? (
             <p className="text-slate-500 text-sm">No templates saved yet.</p>
@@ -313,36 +321,32 @@ export function CreatePayrollPage() {
                     <p className="text-slate-500 text-xs">{t.employees.length} employees · {t.token_type}</p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button onClick={() => handleLoadTemplate(t)}
-                      className="text-xs bg-sky-500/20 text-sky-400 border border-sky-500/30 rounded-lg px-3 py-1.5 hover:bg-sky-500/30 transition-all font-display">
-                      Load
-                    </button>
-                    <button onClick={() => handleDeleteTemplate(t.id)} className="text-xs text-red-400 hover:text-red-300 transition-colors">×</button>
+                    <button onClick={() => handleLoadTemplate(t)} className="text-xs bg-sky-500/20 text-sky-400 border border-sky-500/30 rounded-lg px-3 py-1.5 hover:bg-sky-500/30 transition-all font-display">Load</button>
+                    <button onClick={() => handleDeleteTemplate(t.id)} className="text-slate-500 hover:text-red-400 transition-colors"><X className="w-4 h-4" /></button>
                   </div>
                 </div>
               ))}
             </div>
           )}
-        </div>
+        </motion.div>
       )}
 
       {/* Save as template */}
       {showSaveTemplate && (
-        <div className="mb-4 bg-slate-900 border border-slate-700 rounded-2xl p-4">
+        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mb-4 bg-slate-900 border border-slate-700 rounded-2xl p-4">
           <h3 className="font-display font-semibold text-slate-200 text-sm mb-3">Save as Template</h3>
           <div className="flex gap-2">
-            <Input placeholder="Template name e.g. Engineering Team" value={templateName}
-              onChange={e => setTemplateName(e.target.value)} className="flex-1" />
+            <Input placeholder="Template name e.g. Engineering Team" value={templateName} onChange={e => setTemplateName(e.target.value)} className="flex-1" />
             <Button size="sm" onClick={handleSaveTemplate}>Save</Button>
             <Button size="sm" variant="secondary" onClick={() => setShowSaveTemplate(false)}>Cancel</Button>
           </div>
-        </div>
+        </motion.div>
       )}
 
+      {/* Main form card */}
       <Card className="mb-6">
         <div className="mb-4">
-          <Input label="Payroll Name (optional)" placeholder="e.g. May 2026 Engineering Team"
-            value={batchName} onChange={e => setBatchName(e.target.value)} />
+          <Input label="Payroll Name (optional)" placeholder="e.g. May 2026 Engineering Team" value={batchName} onChange={e => setBatchName(e.target.value)} />
         </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
@@ -357,12 +361,11 @@ export function CreatePayrollPage() {
               ))}
             </div>
           </div>
-          <DatePicker value={payday}
-            onChange={(date) => { setPayday(date); setErrors(p => { const n = { ...p }; delete n.payday; return n; }); }}
-            error={errors.payday} min={new Date().toISOString().split('T')[0]} />
+          <DatePicker value={payday} onChange={(date) => { setPayday(date); setErrors(p => { const n = { ...p }; delete n.payday; return n; }); }} error={errors.payday} min={new Date().toISOString().split('T')[0]} />
         </div>
       </Card>
 
+      {/* Employees */}
       <Card className="mb-4">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-display font-semibold text-slate-200">Employees</h3>
@@ -370,13 +373,12 @@ export function CreatePayrollPage() {
         </div>
         <div className="space-y-4">
           {employees.map((emp, idx) => (
-            <div key={idx} className="relative bg-slate-800/40 border border-slate-700/50 rounded-xl p-4">
+            <motion.div key={idx} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="relative bg-slate-800/40 border border-slate-700/50 rounded-xl p-4">
               <div className="flex items-start gap-2 mb-3">
                 <span className="text-xs font-mono text-slate-600 pt-0.5 w-5 shrink-0">#{idx + 1}</span>
-                <Input placeholder="Label (optional)" value={emp.name}
-                  onChange={e => updateEmployee(idx, 'name', e.target.value)} className="flex-1 !text-xs !py-1.5" />
+                <Input placeholder="Label (optional)" value={emp.name} onChange={e => updateEmployee(idx, 'name', e.target.value)} className="flex-1 !text-xs !py-1.5" />
                 {employees.length > 1 && (
-                  <button onClick={() => removeEmployee(idx)} className="text-slate-600 hover:text-red-400 transition-colors text-lg leading-none mt-1">×</button>
+                  <button onClick={() => removeEmployee(idx)} className="text-slate-600 hover:text-red-400 transition-colors mt-1"><X className="w-4 h-4" /></button>
                 )}
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -401,11 +403,12 @@ export function CreatePayrollPage() {
                   {errors[`emp_${idx}_amount`] && <p className="text-xs text-red-400 font-mono">{errors[`emp_${idx}_amount`]}</p>}
                 </div>
               </div>
-            </div>
+            </motion.div>
           ))}
         </div>
-        <button onClick={addEmployee} className="mt-4 w-full py-2.5 border border-dashed border-slate-700 rounded-xl text-sm text-slate-500 hover:text-slate-300 hover:border-slate-600 transition-all font-display">
-          + Add Employee
+        <button onClick={addEmployee} className="mt-4 w-full py-2.5 border border-dashed border-slate-700 rounded-xl text-sm text-slate-500 hover:text-slate-300 hover:border-slate-600 transition-all font-display flex items-center justify-center gap-2">
+          <Plus className="w-4 h-4" />
+          Add Employee
         </button>
       </Card>
 
@@ -429,22 +432,31 @@ export function CreatePayrollPage() {
       {/* Gas estimation */}
       <div className="flex items-center justify-between bg-slate-900 border border-slate-800 rounded-2xl px-5 py-3 mb-6">
         <div className="flex items-center gap-3">
-          <p className="text-xs text-slate-500 font-display uppercase tracking-wider">Est. Gas Fee</p>
+          <Fuel className="w-4 h-4 text-slate-500 shrink-0" />
+          <p className="text-xs text-slate-500 font-display uppercase tracking-wider">Est. Gas</p>
           {gasEstimate && <p className="text-sm font-mono text-slate-300">{gasEstimate}</p>}
           {!gasEstimate && !estimating && <p className="text-xs text-slate-600">—</p>}
           {estimating && <span className="w-3 h-3 border border-sky-400 border-t-transparent rounded-full animate-spin block" />}
         </div>
         <button onClick={estimateGas} disabled={estimating || employees.every(e => !e.wallet || !e.amount) || !payday}
-          className="text-xs text-sky-400 hover:text-sky-300 font-display disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
-          {estimating ? 'Estimating...' : 'Estimate gas →'}
+          className="text-xs text-sky-400 hover:text-sky-300 font-display disabled:opacity-30 disabled:cursor-not-allowed transition-colors shrink-0">
+          {estimating ? 'Estimating...' : 'Estimate →'}
         </button>
       </div>
 
+      {/* Action buttons */}
       <div className="flex gap-3">
         <Button variant="secondary" onClick={() => navigate('/dashboard')}>Cancel</Button>
-        <Button variant="secondary" onClick={() => setShowSaveTemplate(true)}>💾 Save Template</Button>
+        <button
+          onClick={() => setShowSaveTemplate(true)}
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-display font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all"
+        >
+          <Save className="w-4 h-4" />
+          <span className="hidden sm:inline">Save Template</span>
+          <span className="sm:hidden">Save</span>
+        </button>
         <Button className="flex-1" onClick={handleNext}>Review & Confirm →</Button>
       </div>
-    </div>
+    </motion.div>
   );
 }
